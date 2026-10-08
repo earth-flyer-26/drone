@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>ドローン・アース</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310161c'/%3E%3Cg stroke='%235fd0e6' stroke-width='5' fill='none'%3E%3Cpath d='M20 20L44 44M44 20L20 44'/%3E%3Ccircle cx='17' cy='17' r='9'/%3E%3Ccircle cx='47' cy='17' r='9'/%3E%3Ccircle cx='17' cy='47' r='9'/%3E%3Ccircle cx='47' cy='47' r='9'/%3E%3C/g%3E%3Crect x='25' y='25' width='14' height='14' rx='4' fill='%235fd0e6'/%3E%3C/svg%3E">
+<link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Widgets/widgets.css">
 <script src="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Cesium.js"></script>
 <style>
@@ -22,6 +23,9 @@
     color-scheme: dark;
   }
   html, body { height: 100%; margin: 0; overflow: hidden; background: #000; color: var(--fg); font-family: var(--font); }
+  /* 長押しで文字が選択され、スマホの選択メニューが出るのを防ぐ（入力欄は除く） */
+  body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  input { user-select: text; -webkit-user-select: text; }
   #map { position: absolute; inset: 0; }
   .cesium-viewer-bottom { bottom: 4px; }
   .hud { position: absolute; z-index: 5; }
@@ -364,9 +368,9 @@
     );
   };
 
-  // ---- 全画面表示（対応していないブラウザではボタンを隠す） ----
+  // ---- 全画面表示（対応していないブラウザ、ホーム画面から全画面で開いたときはボタンを隠す） ----
   const fsBtn = $("fsBtn"), root = document.documentElement;
-  if (document.fullscreenEnabled || document.webkitFullscreenEnabled) {
+  if ((document.fullscreenEnabled || document.webkitFullscreenEnabled) && !matchMedia("(display-mode: fullscreen)").matches) {
     fsBtn.onclick = () => {
       const p = (document.fullscreenElement || document.webkitFullscreenElement)
         ? (document.exitFullscreen || document.webkitExitFullscreen).call(document)
