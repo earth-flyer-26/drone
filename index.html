@@ -107,11 +107,10 @@
     <button id="compass" type="button" aria-label="北を向く" title="北を向く">
       <svg width="40" height="40" viewBox="-20 -20 40 40" aria-hidden="true">
         <circle r="18" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.5"/>
-        <g id="needle">
-          <path d="M0 -11L4.5 0H-4.5Z" fill="#f2665b"/>
-          <path d="M0 11L4.5 0H-4.5Z" fill="currentColor" fill-opacity="0.55"/>
-          <text y="-12.5" text-anchor="middle" font-size="7.5" font-weight="700" fill="#f2665b">N</text>
+        <g font-size="7" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="currentColor" fill-opacity="0.75">
+          <text y="-13" fill="#f2665b" fill-opacity="1">N</text><text x="13.5">E</text><text y="13.5">S</text><text x="-13.5">W</text>
         </g>
+        <path id="needle" d="M0 -9.5L4.5 -1.5H1.6V6H-1.6V-1.5H-4.5Z" style="fill: var(--accent)"/>
       </svg>
     </button>
     <div id="gauges" class="panel" aria-live="off">
@@ -314,10 +313,10 @@
     }
   });
 
-  // ---- コンパス（針は常に北を指す。押すと北を向く） ----
+  // ---- コンパス（北を上に固定し、進行方向を矢印で示す。押すと北を向く） ----
   let northing = false;
   const needle = $("needle");
-  scene.postRender.addEventListener(() => { needle.setAttribute("transform", "rotate(" + (-R(camera.heading)).toFixed(1) + ")"); });
+  scene.postRender.addEventListener(() => { needle.setAttribute("transform", "rotate(" + R(camera.heading).toFixed(1) + ")"); });
   $("compass").onclick = () => { if (!flying) northing = true; };
 
   // ---- 対地高度維持（真下の地面・建物からの高さを保つ） ----
