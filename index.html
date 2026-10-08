@@ -39,6 +39,17 @@
   #searchForm { display: flex; flex: 1 1 180px; max-width: 240px; }
   #searchForm input { flex: 1; min-width: 0; height: 38px; padding: 0 12px; font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 10px 0 0 10px; }
   #searchForm button { height: 40px; border-radius: 0 10px 10px 0; padding: 0 14px; }
+  #searchForm { position: relative; }
+  #top { z-index: 6; }
+  #results { position: absolute; z-index: 2; top: 46px; left: 0; width: min(320px, calc(100vw - 88px)); max-height: min(60vh, 420px); overflow-y: auto; background: var(--panel-solid); padding: 4px; box-sizing: border-box; }
+  #results > button { display: block; width: 100%; height: auto; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: none; }
+  #results > button + button { border-top: 1px solid var(--line); border-radius: 0; }
+  #results > button:hover { background: rgba(95, 208, 230, 0.15); }
+  #results b { display: block; font-weight: 600; font-size: 14px; }
+  #results small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  #results .foot { display: flex; align-items: center; gap: 8px; padding: 6px 4px 2px 10px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); }
+  #results .foot span { flex: 1; }
+  #results .foot button { width: 36px; height: 32px; padding: 0; border-radius: 8px; font-size: 16px; }
   .btn { height: 40px; padding: 0 12px; white-space: nowrap; }
   #gauges { margin-left: auto; padding: 8px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; min-width: 150px; font-variant-numeric: tabular-nums; }
   #gauges b { color: var(--accent); font-weight: 500; }
@@ -87,6 +98,7 @@
   <form id="searchForm" role="search">
     <input id="q" type="text" placeholder="東京タワー、富士山 など" aria-label="場所の名前">
     <button type="submit">Go</button>
+    <div id="results" class="panel" hidden></div>
   </form>
   <button id="speedBtn" class="btn" type="button" title="速度を切り替え（Shift キーでも可）">●●○</button>
   <div id="gauges" class="panel" aria-live="off">
@@ -141,7 +153,7 @@
     <button id="keySave" type="button">保存して読み込む</button>
     <button id="keyClear" type="button">削除</button>
   </div>
-  <p>地図データ：Google（Map Tiles API）。地名検索：国土地理院 地名検索API。</p>
+  <p>地図データ：Google（Map Tiles API）。地名検索：© OpenStreetMap contributors（Nominatim）、国土地理院 地名検索API。</p>
 </div>
 
 <div id="toast" class="hud panel" hidden></div>
@@ -337,23 +349,74 @@
     camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat - 0.0045, 450), orientation: { heading: 0, pitch: D(-30), roll: 0 }, duration: 3, complete: done, cancel: done });
   }
 
-  // ---- 地名検索（国土地理院） ----
+  // ---- 地名検索（OpenStreetMap の Nominatim と国土地理院の両方に聞き、候補から選ぶ） ----
+  // 国土地理院の結果に「福岡県那珂川市」を添えるため、市区町村コードの一覧を初回の検索時に1回だけ読む（文字列として読むだけで実行しない）
+  let muniP = null;
+  function loadMuni() {
+    return muniP = muniP || fetch("https://maps.gsi.go.jp/js/muni.js").then((r) => r.text()).then((t) => {
+      const m = {};
+      for (const x of t.matchAll(/MUNI_ARRAY\["(\d+)"\]\s*=\s*'([^']*)'/g)) { const p = x[2].split(","); m[x[1]] = p[1] + p[3].replace(/[\s　]/g, ""); }
+      return m;
+    }).catch(() => ({}));
+  }
+  async function searchOsm(q) {
+    const res = await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&accept-language=ja&q=" + encodeURIComponent(q));
+    return (await res.json()).map((x) => {
+      const a = x.address || {};
+      const area = [a.province || a.state, a.city || a.town || a.village || a.county, a.suburb || a.quarter].filter(Boolean);
+      const name = x.name || x.display_name.split(",")[0];
+      return { name, area: area.filter((s) => s !== name).join(" "), lon: +x.lon, lat: +x.lat, src: "OSM" };
+    });
+  }
+  async function searchGsi(q) {
+    const [list, muni] = await Promise.all([fetch("https://msearch.gsi.go.jp/address-search/AddressSearch?q=" + encodeURIComponent(q)).then((r) => r.json()), loadMuni()]);
+    return list.slice(0, 6).map((x) => {
+      const t = x.properties.title, code = x.properties.addressCode;
+      const area = code ? muni[String(parseInt(code, 10))] || "" : "";
+      return { name: t, area: area && !t.startsWith(area) ? area : "", lon: x.geometry.coordinates[0], lat: x.geometry.coordinates[1], src: "国土地理院" };
+    });
+  }
+
+  const resultsEl = $("results"), goBtn = $("searchForm").querySelector("button");
+  function closeResults() { resultsEl.hidden = true; resultsEl.textContent = ""; }
+  function go(p) { closeResults(); flyToPlace(p.lon, p.lat); toast(p.name + (p.area ? "（" + p.area + "）" : "") + " へ向かいます", 2500); $("q").blur(); }
   $("searchForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const q = $("q").value.trim();
     if (!q) { toast("場所の名前を入れてください。", 2500); return; }
-    try {
-      const res = await fetch("https://msearch.gsi.go.jp/address-search/AddressSearch?q=" + encodeURIComponent(q));
-      const list = await res.json();
-      if (!list.length) { toast("「" + q + "」は見つかりませんでした。別の言い方でお試しください。", 3500); return; }
-      const [lon, lat] = list[0].geometry.coordinates;
-      flyToPlace(lon, lat);
-      toast(list[0].properties.title + " へ向かいます", 2500);
-      $("q").blur();
-    } catch (err) {
-      toast("地名検索に失敗しました。インターネット接続を確認してください。", 3500);
+    if (goBtn.disabled) return;
+    goBtn.disabled = true;   // OpenStreetMap の利用規約（1秒に1回まで）を守るため、続けて押せないようにする
+    closeResults();
+    const [osm, gsi] = await Promise.allSettled([searchOsm(q), searchGsi(q)]);
+    setTimeout(() => { goBtn.disabled = false; }, 1000);
+    if (osm.status === "rejected" && gsi.status === "rejected") { toast("地名検索に失敗しました。インターネット接続を確認してください。", 3500); return; }
+
+    // OpenStreetMap を先に並べ、ほぼ同じ場所（300m以内）の重複は省く
+    const list = [];
+    for (const p of [...(osm.value || []), ...(gsi.value || [])]) {
+      if (!list.some((o) => Math.abs(o.lat - p.lat) < 0.003 && Math.abs(o.lon - p.lon) < 0.0035 && o.name === p.name)) list.push(p);
     }
+    if (!list.length) { toast("「" + q + "」は見つかりませんでした。別の言い方でお試しください。", 3500); return; }
+    if (list.length === 1) { go(list[0]); return; }
+
+    list.forEach((p) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.innerHTML = "<b></b><small></small>";
+      b.querySelector("b").textContent = p.name;
+      b.querySelector("small").textContent = [p.area, p.src].filter(Boolean).join("　");
+      b.onclick = () => go(p);
+      resultsEl.append(b);
+    });
+    const foot = document.createElement("div");
+    foot.className = "foot";
+    foot.innerHTML = '<span>検索：© OpenStreetMap contributors／国土地理院</span><button type="button" aria-label="候補を閉じる">×</button>';
+    foot.querySelector("button").onclick = closeResults;
+    resultsEl.append(foot);
+    resultsEl.hidden = false;
+    $("q").blur();
   });
+  addEventListener("keydown", (e) => { if (e.key === "Escape") closeResults(); });
 
   // ---- 現在地（位置情報はこのページの中でだけ使い、送信・保存しない） ----
   $("locBtn").onclick = () => {
