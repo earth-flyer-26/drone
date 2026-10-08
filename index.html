@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>ドローン・アース</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310161c'/%3E%3Cg stroke='%235fd0e6' stroke-width='5' fill='none'%3E%3Cpath d='M20 20L44 44M44 20L20 44'/%3E%3Ccircle cx='17' cy='17' r='9'/%3E%3Ccircle cx='47' cy='17' r='9'/%3E%3Ccircle cx='17' cy='47' r='9'/%3E%3Ccircle cx='47' cy='47' r='9'/%3E%3C/g%3E%3Crect x='25' y='25' width='14' height='14' rx='4' fill='%235fd0e6'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Widgets/widgets.css">
 <script src="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Cesium.js"></script>
 <style>
@@ -38,6 +39,7 @@
   #gauges { margin-left: auto; padding: 8px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; min-width: 150px; font-variant-numeric: tabular-nums; }
   #gauges b { color: var(--accent); font-weight: 500; }
   #speedBtn { font-family: var(--mono); letter-spacing: 2px; }
+  #fsBtn svg { display: block; margin: auto; }
 
   #stick { left: 24px; bottom: calc(28px + env(safe-area-inset-bottom, 0px)); width: 130px; height: 130px; border-radius: 50%; touch-action: none; }
   #knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(95, 208, 230, 0.35); border: 1px solid var(--accent); }
@@ -85,6 +87,7 @@
     方位 <b id="gHead">---</b><br>
     傾き <b id="gPitch">---</b>°
   </div>
+  <button id="fsBtn" class="btn" type="button" aria-label="全画面表示" title="全画面表示"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
   <button id="setBtn" class="btn" type="button" aria-label="設定">⚙</button>
 </div>
 
@@ -290,6 +293,19 @@
       toast("地名検索に失敗しました。インターネット接続を確認してください。", 3500);
     }
   });
+
+  // ---- 全画面表示（対応していないブラウザではボタンを隠す） ----
+  const fsBtn = $("fsBtn"), root = document.documentElement;
+  if (document.fullscreenEnabled || document.webkitFullscreenEnabled) {
+    fsBtn.onclick = () => {
+      const p = (document.fullscreenElement || document.webkitFullscreenElement)
+        ? (document.exitFullscreen || document.webkitExitFullscreen).call(document)
+        : (root.requestFullscreen || root.webkitRequestFullscreen).call(root);
+      if (p && p.catch) p.catch(() => toast("全画面表示にできませんでした。", 2500));
+    };
+  } else {
+    fsBtn.hidden = true;
+  }
 
   // ---- シートの開閉 ----
   function toggle(sheetId) { $(sheetId).hidden = !$(sheetId).hidden; }
