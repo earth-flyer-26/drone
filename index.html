@@ -198,6 +198,9 @@
   const scene = viewer.scene, camera = viewer.camera;
   scene.skyAtmosphere.show = true;
   scene.screenSpaceCameraController.enableCollisionDetection = false;
+  // 景色が変わらない間は描き直さない（スマホの発熱・電池の消耗を抑える）。描き直しが要るときは下の見張り役が頼む
+  scene.requestRenderMode = true;
+  scene.maximumRenderTimeChange = Infinity;
 
   const D = Cesium.Math.toRadians, R = Cesium.Math.toDegrees;
   camera.setView({ destination: Cesium.Cartesian3.fromDegrees(139.7671, 35.6705, 420), orientation: { heading: 0, pitch: D(-25), roll: 0 } });
@@ -211,6 +214,7 @@
     try {
       tileset = await Cesium.Cesium3DTileset.fromUrl("https://tile.googleapis.com/v1/3dtiles/root.json?key=" + encodeURIComponent(key), { showCreditsOnScreen: true });
       scene.primitives.add(tileset);
+      scene.requestRender();
       toast("準備ができました。スティックやキーボードで飛んでみてください。", 3500);
     } catch (e) {
       // 429 は「回数が多すぎる」。Google Cloud で決めた1日の上限に達したとき
@@ -274,13 +278,14 @@
   // 傾きスライダー
   const pitchEl = $("pitch");
   let pitchDeg = -25, pitchFromSlider = false;
-  pitchEl.addEventListener("input", () => { pitchDeg = +pitchEl.value; pitchFromSlider = true; });
+  pitchEl.addEventListener("input", () => { pitchDeg = +pitchEl.value; pitchFromSlider = true; scene.requestRender(); });
 
   // ---- 毎フレームの移動 ----
   const scratch = new Cesium.Matrix4(), off = new Cesium.Cartesian3(), wv = new Cesium.Cartesian3();
   let last = performance.now();
   scene.preRender.addEventListener(() => {
-    const now = performance.now(), dt = Math.min((now - last) / 1000, 0.1); last = now;
+    // 休んでいた直後の1コマで大きく動かないよう、間が空いたら1/60秒として扱う
+    const now = performance.now(), gap = (now - last) / 1000, dt = gap > 0.1 ? 1 / 60 : gap; last = now;
     const k = (c) => keys.has(c) ? 1 : 0;
     const fwd = Cesium.Math.clamp(input.fy + k("KeyW") - k("KeyS"), -1, 1);
     const side = Cesium.Math.clamp(input.fx + k("KeyD") - k("KeyA"), -1, 1);
@@ -358,6 +363,12 @@
       toast("高さの自動調整を止めました。", 2000);
     }
   };
+
+  // ---- 描き直しの見張り役：操作中・飛行中・高さ維持中・北へ回転中だけ、毎コマ描き直しを頼む ----
+  (function watch() {
+    if (keys.size || stickId !== null || held.up || held.down || held.left || held.right || follow || northing || flying) scene.requestRender();
+    requestAnimationFrame(watch);
+  })();
 
   // 計器
   const dirs = ["北", "北東", "東", "南東", "南", "南西", "西", "北西"];
