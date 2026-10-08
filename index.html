@@ -52,6 +52,9 @@
   #results .foot button { width: 36px; height: 32px; padding: 0; border-radius: 8px; font-size: 16px; }
   .btn { height: 40px; padding: 0 12px; white-space: nowrap; }
   #instr { margin-left: auto; display: flex; gap: 8px; align-items: flex-start; }
+  #reliefBtn { width: 44px; padding: 0; }
+  #reliefBtn svg { display: block; margin: auto; }
+  #reliefBtn.on { border-color: var(--accent); background: rgba(95, 208, 230, 0.25); color: var(--accent); }
   #compass { width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
   #gauges { padding: 8px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; min-width: 150px; font-variant-numeric: tabular-nums; }
   #gauges b { color: var(--accent); font-weight: 500; }
@@ -103,6 +106,7 @@
     <div id="results" class="panel" hidden></div>
   </form>
   <button id="speedBtn" class="btn" type="button" title="速度を切り替え（Shift キーでも可）">●●○</button>
+  <button id="reliefBtn" class="btn" type="button" aria-label="起伏モード" aria-pressed="false" title="起伏モード（土地の起伏を表示）"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 17c3-1 4-5 9-5s6 4 9 5"/><path d="M6 13c2-1 3-4 6-4s4 3 6 4"/><path d="M9.5 9c1-1 1.5-2.5 2.5-2.5s1.5 1.5 2.5 2.5"/><path d="M2 21h20"/></svg></button>
   <div id="instr">
     <button id="compass" type="button" aria-label="北を向く" title="北を向く">
       <svg width="40" height="40" viewBox="-20 -20 40 40" aria-hidden="true">
@@ -166,7 +170,7 @@
     <button id="keySave" type="button">保存して読み込む</button>
     <button id="keyClear" type="button">削除</button>
   </div>
-  <p>地図データ：Google（Map Tiles API）。地名検索：© OpenStreetMap contributors（Nominatim）、国土地理院 地名検索API。</p>
+  <p>地図データ：Google（Map Tiles API）。地名検索：© OpenStreetMap contributors（Nominatim）、国土地理院 地名検索API。起伏モード：国土地理院（標高タイル・色別標高図・陰影起伏図）。</p>
 </div>
 
 <div id="toast" class="hud panel" hidden></div>
@@ -205,7 +209,7 @@
   const D = Cesium.Math.toRadians, R = Cesium.Math.toDegrees;
   camera.setView({ destination: Cesium.Cartesian3.fromDegrees(139.7671, 35.6705, 420), orientation: { heading: 0, pitch: D(-25), roll: 0 } });
 
-  let tileset = null;
+  let tileset = null, reliefOn = false;
   async function loadTiles() {
     const key = store.get(KEY, "");
     if (tileset) { scene.primitives.remove(tileset); tileset = null; }
@@ -213,6 +217,7 @@
     toast("地図を読み込んでいます…");
     try {
       tileset = await Cesium.Cesium3DTileset.fromUrl("https://tile.googleapis.com/v1/3dtiles/root.json?key=" + encodeURIComponent(key), { showCreditsOnScreen: true });
+      tileset.show = !reliefOn;   // 起伏モード中に読み込みが終わったら、隠したままにする
       scene.primitives.add(tileset);
       scene.requestRender();
       toast("準備ができました。スティックやキーボードで飛んでみてください。", 3500);
@@ -334,8 +339,10 @@
   let follow = false, flying = false, aglTarget = 0, groundH;
   const gc = new Cesium.Cartographic();
   // 真下の高さは、読み込み済みの3D地図から測る（描画の外で0.1秒おき。測れないときは undefined）
+  // 起伏モードでは、国土地理院の地形から直接読む（軽い）
   function measureGround() {
-    groundH = tileset && scene.sampleHeightSupported ? scene.sampleHeight(camera.positionCartographic) : undefined;
+    if (reliefOn) groundH = scene.globe.getHeight(camera.positionCartographic);
+    else groundH = tileset && scene.sampleHeightSupported ? scene.sampleHeight(camera.positionCartographic) : undefined;
     return groundH;
   }
   setInterval(() => { if (follow) measureGround(); }, 100);
@@ -364,6 +371,85 @@
     }
   };
 
+  // ---- 起伏モード（国土地理院の標高データで地形を立体にし、色別標高図と陰影起伏図を重ねる。日本国内のみ） ----
+  // 標高タイル（PNG）の1画素 = R*65536 + G*256 + B（0.01m 単位）。2^23 はデータなし（海など）
+  // 国土地理院の標高は海面からの高さなので、地図の基準（楕円体）に合わせるため、日本付近のおおよその差 37m を足す
+  const GEOID = 37, DEM_MAX = 14, demCache = new Map();
+  function demTile(z, x, y) {
+    const k = z + "/" + x + "/" + y;
+    if (!demCache.has(k)) {
+      if (demCache.size > 300) demCache.delete(demCache.keys().next().value);   // 古いものから捨てる
+      demCache.set(k, fetch("https://cyberjapandata.gsi.go.jp/xyz/dem_png/" + k + ".png")
+        .then((r) => r.ok ? r.blob() : null)
+        .then((b) => b && createImageBitmap(b))
+        .then((img) => {
+          if (!img) return null;   // 日本の外などデータのない所
+          const cv = document.createElement("canvas"); cv.width = cv.height = 256;
+          const cx = cv.getContext("2d", { willReadFrequently: true }); cx.drawImage(img, 0, 0);
+          const d = cx.getImageData(0, 0, 256, 256).data, h = new Float32Array(65536);
+          for (let i = 0; i < 65536; i++) {
+            const v = d[i * 4] * 65536 + d[i * 4 + 1] * 256 + d[i * 4 + 2];
+            h[i] = v === 8388608 ? 0 : (v < 8388608 ? v : v - 16777216) * 0.01;
+          }
+          return h;
+        })
+        .catch(() => null));
+    }
+    return demCache.get(k);
+  }
+  const N = 65;   // 1枚の地形を 65×65 点で作る
+  const terrain = new Cesium.CustomHeightmapTerrainProvider({
+    width: N, height: N, tilingScheme: new Cesium.WebMercatorTilingScheme(), credit: "国土地理院",
+    callback: async (x, y, z) => {
+      const out = new Float32Array(N * N);
+      if (z < 1) return out;
+      // 14段階より細かい所は、14段階のデータを引き伸ばして使う
+      const zz = Math.min(z, DEM_MAX), sc = 2 ** (z - zz), px = Math.floor(x / sc), py = Math.floor(y / sc);
+      const h = await demTile(zz, px, py);
+      if (!h) return out;
+      const ox = (x - px * sc) / sc * 256, oy = (y - py * sc) / sc * 256, step = 256 / sc / (N - 1);
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+        // なめらかにするため、周りの4画素から割り出す
+        const fx = Math.min(ox + i * step, 255), fy = Math.min(oy + j * step, 255);
+        const x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(x0 + 1, 255), y1 = Math.min(y0 + 1, 255), ax = fx - x0, ay = fy - y0;
+        const top = h[y0 * 256 + x0] * (1 - ax) + h[y0 * 256 + x1] * ax, bot = h[y1 * 256 + x0] * (1 - ax) + h[y1 * 256 + x1] * ax;
+        out[j * N + i] = top * (1 - ay) + bot * ay + GEOID;
+      }
+      return out;
+    }
+  });
+  function gsiLayer(name, min, max) {
+    return new Cesium.UrlTemplateImageryProvider({
+      url: "https://cyberjapandata.gsi.go.jp/xyz/" + name + "/{z}/{x}/{y}.png",
+      minimumLevel: min, maximumLevel: max, credit: "国土地理院"
+    });
+  }
+  function setRelief(on) {
+    reliefOn = on;
+    if (on && !scene.globe) {
+      // 初めて起伏モードにしたときだけ、地形の土台を作る
+      const g = new Cesium.Globe(Cesium.Ellipsoid.WGS84);
+      g.terrainProvider = terrain;
+      g.baseColor = Cesium.Color.fromCssColorString("#1d2a33");
+      g.depthTestAgainstTerrain = true;
+      scene.globe = g;
+      g.imageryLayers.addImageryProvider(gsiLayer("relief", 5, 15));
+      g.imageryLayers.addImageryProvider(gsiLayer("hillshademap", 2, 16)).alpha = 0.45;
+    }
+    if (scene.globe) scene.globe.show = on;
+    if (tileset) tileset.show = !on;
+    $("reliefBtn").classList.toggle("on", on);
+    $("reliefBtn").setAttribute("aria-pressed", on);
+    if (follow) startFollow();
+    scene.requestRender();
+  }
+  $("reliefBtn").onclick = () => {
+    setRelief(!reliefOn);
+    toast(reliefOn
+      ? "起伏モード：国土地理院の標高データで地形を表示しています（日本国内のみ。建物や木は表示されません）。"
+      : "Google の3D地図に戻しました。", 3500);
+  };
+
   // ---- 描き直しの見張り役：操作中・飛行中・高さ維持中・北へ回転中だけ、毎コマ描き直しを頼む ----
   (function watch() {
     if (keys.size || stickId !== null || held.up || held.down || held.left || held.right || follow || northing || flying) scene.requestRender();
@@ -383,11 +469,22 @@
   }, 200);
 
   // 指定地点を少し南の上空から北向きに見下ろす位置へ飛ぶ
-  function flyToPlace(lon, lat) {
+  // 国土地理院の標高API で地面の高さ（海面から）を調べる。日本の外や失敗したときは null
+  async function elevation(lon, lat) {
+    try {
+      const r = await fetch(`https://cyberjapandata2.gsi.go.jp/general/dem/scripts/getelevation.php?lon=${lon.toFixed(6)}&lat=${lat.toFixed(6)}&outtype=JSON`, { signal: AbortSignal.timeout(3000) });
+      const e = (await r.json()).elevation;
+      return typeof e === "number" ? e : null;
+    } catch (err) { return null; }
+  }
+  async function flyToPlace(lon, lat) {
     // 飛んでいる間は対地高度維持を休み、着いたらその場の高さを保ち直す
     flying = true;
     const done = () => setTimeout(() => { flying = false; if (follow) startFollow(); }, 0);
-    camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat - 0.0045, 450), orientation: { heading: 0, pitch: D(-30), roll: 0 }, duration: 3, complete: done, cancel: done });
+    // 目的地と、そこを眺める位置（少し南）の地面のうち高い方から 450m 上へ。山の中に入らないようにする
+    const [a, b] = await Promise.all([elevation(lon, lat), elevation(lon, lat - 0.0045)]);
+    const ground = a === null && b === null ? 0 : Math.max(a ?? -Infinity, b ?? -Infinity) + GEOID;
+    camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat - 0.0045, ground + 450), orientation: { heading: 0, pitch: D(-30), roll: 0 }, duration: 3, complete: done, cancel: done });
   }
 
   // ---- 地名検索（OpenStreetMap の Nominatim と国土地理院の両方に聞き、候補から選ぶ） ----
