@@ -30,16 +30,18 @@
   button:hover { border-color: var(--accent); }
   button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  #top { top: calc(12px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px; display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; pointer-events: none; }
+  #top { top: calc(12px + env(safe-area-inset-top, 0px)); left: 12px; right: 64px; display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; pointer-events: none; }
   #top > * { pointer-events: auto; }
-  #searchForm { display: flex; flex: 1 1 260px; max-width: 360px; }
+  #searchForm { display: flex; flex: 1 1 180px; max-width: 240px; }
   #searchForm input { flex: 1; min-width: 0; height: 38px; padding: 0 12px; font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 10px 0 0 10px; }
   #searchForm button { height: 40px; border-radius: 0 10px 10px 0; padding: 0 14px; }
   .btn { height: 40px; padding: 0 12px; white-space: nowrap; }
   #gauges { margin-left: auto; padding: 8px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; min-width: 150px; font-variant-numeric: tabular-nums; }
   #gauges b { color: var(--accent); font-weight: 500; }
   #speedBtn { font-family: var(--mono); letter-spacing: 2px; }
-  #fsBtn svg { display: block; margin: auto; }
+  #side { top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; display: flex; flex-direction: column; gap: 8px; }
+  #side .btn { width: 44px; padding: 0; }
+  #side svg { display: block; margin: auto; }
 
   #stick { left: 24px; bottom: calc(28px + env(safe-area-inset-bottom, 0px)); width: 130px; height: 130px; border-radius: 50%; touch-action: none; }
   #knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(95, 208, 230, 0.35); border: 1px solid var(--accent); }
@@ -53,7 +55,7 @@
   #tilt { left: 50%; transform: translateX(-50%); bottom: calc(28px + env(safe-area-inset-bottom, 0px)); padding: 8px 14px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
   #tilt input { width: 140px; accent-color: var(--accent); }
 
-  .sheet { top: calc(64px + env(safe-area-inset-top, 0px)); right: 12px; width: min(340px, calc(100vw - 24px)); padding: 14px; background: var(--panel-solid); font-size: 14px; }
+  .sheet { top: calc(12px + env(safe-area-inset-top, 0px)); right: 64px; width: min(340px, calc(100vw - 76px)); box-sizing: border-box; padding: 14px; background: var(--panel-solid); font-size: 14px; }
   .sheet h2 { font-size: 15px; font-weight: 600; margin: 0 0 10px; }
   .sheet p { margin: 6px 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
   .sheet input[type=text], .sheet input[type=password] { width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; font: inherit; color: var(--fg); background: #1a232b; border: 1px solid var(--line); border-radius: 8px; }
@@ -87,7 +89,11 @@
     方位 <b id="gHead">---</b><br>
     傾き <b id="gPitch">---</b>°
   </div>
+</div>
+
+<div id="side" class="hud">
   <button id="fsBtn" class="btn" type="button" aria-label="全画面表示" title="全画面表示"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
+  <button id="locBtn" class="btn" type="button" aria-label="現在地へ移動" title="現在地へ移動"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
   <button id="setBtn" class="btn" type="button" aria-label="設定">⚙</button>
 </div>
 
@@ -253,7 +259,7 @@
     if (fwd || side || vert || turn || tiltKey || pitchDeg !== R(camera.pitch)) {
       // 高いところほど速く飛ぶ
       const v = speeds[speedIdx] * Math.max(1, carto.height / 300) * dt;
-      heading += D(35) * turn * dt;
+      heading += D(26.25) * turn * dt;
       pitchDeg = Cesium.Math.clamp(pitchDeg + 45 * tiltKey * dt, -89, 0);
       const e = Math.cos(heading) * side + Math.sin(heading) * fwd;
       const n = -Math.sin(heading) * side + Math.cos(heading) * fwd;
@@ -276,6 +282,11 @@
     if (document.activeElement !== pitchEl) pitchEl.value = Math.round(R(camera.pitch));
   }, 200);
 
+  // 指定地点を少し南の上空から北向きに見下ろす位置へ飛ぶ
+  function flyToPlace(lon, lat) {
+    camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat - 0.0045, 450), orientation: { heading: 0, pitch: D(-30), roll: 0 }, duration: 3 });
+  }
+
   // ---- 地名検索（国土地理院） ----
   $("searchForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -286,13 +297,26 @@
       const list = await res.json();
       if (!list.length) { toast("「" + q + "」は見つかりませんでした。別の言い方でお試しください。", 3500); return; }
       const [lon, lat] = list[0].geometry.coordinates;
-      camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat - 0.0045, 450), orientation: { heading: 0, pitch: D(-30), roll: 0 }, duration: 3 });
+      flyToPlace(lon, lat);
       toast(list[0].properties.title + " へ向かいます", 2500);
       $("q").blur();
     } catch (err) {
       toast("地名検索に失敗しました。インターネット接続を確認してください。", 3500);
     }
   });
+
+  // ---- 現在地（位置情報はこのページの中でだけ使い、送信・保存しない） ----
+  $("locBtn").onclick = () => {
+    if (!navigator.geolocation) { toast("このブラウザでは現在地を使えません。", 3000); return; }
+    toast("現在地を調べています…");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { flyToPlace(pos.coords.longitude, pos.coords.latitude); toast("現在地へ向かいます", 2500); },
+      (err) => toast(err.code === 1
+        ? "位置情報の利用が許可されていません。ブラウザの設定で、このサイトの位置情報を許可してください。"
+        : "現在地を取得できませんでした。しばらくしてからお試しください。", 4000),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+    );
+  };
 
   // ---- 全画面表示（対応していないブラウザではボタンを隠す） ----
   const fsBtn = $("fsBtn"), root = document.documentElement;
