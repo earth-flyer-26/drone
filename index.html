@@ -213,6 +213,11 @@
       scene.primitives.add(tileset);
       toast("準備ができました。スティックやキーボードで飛んでみてください。", 3500);
     } catch (e) {
+      // 429 は「回数が多すぎる」。Google Cloud で決めた1日の上限に達したとき
+      if ((e && e.statusCode === 429) || /\b429\b/.test(e && e.message ? e.message : String(e))) {
+        toast("今日の地図の読み込み回数の上限（Google Cloud で設定した回数）に達しました。日本時間の午後4時ごろ（冬時間は午後5時ごろ）に元に戻ります。");
+        return;
+      }
       toast("地図を読み込めませんでした。API キーが正しいか、Map Tiles API が有効になっているかを確認してください。（" + (e && e.message ? e.message : e) + "）");
     }
   }
