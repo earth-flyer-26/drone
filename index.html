@@ -51,7 +51,9 @@
   #results .foot span { flex: 1; }
   #results .foot button { width: 36px; height: 32px; padding: 0; border-radius: 8px; font-size: 16px; }
   .btn { height: 40px; padding: 0 12px; white-space: nowrap; }
-  #gauges { margin-left: auto; padding: 8px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; min-width: 150px; font-variant-numeric: tabular-nums; }
+  #instr { margin-left: auto; display: flex; gap: 8px; align-items: flex-start; }
+  #compass { width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
+  #gauges { padding: 8px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; min-width: 150px; font-variant-numeric: tabular-nums; }
   #gauges b { color: var(--accent); font-weight: 500; }
   #speedBtn { font-family: var(--mono); letter-spacing: 2px; }
   #side { top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -101,11 +103,23 @@
     <div id="results" class="panel" hidden></div>
   </form>
   <button id="speedBtn" class="btn" type="button" title="速度を切り替え（Shift キーでも可）">●●○</button>
-  <div id="gauges" class="panel" aria-live="off">
-    高度 <b id="gAlt">---</b> m<br>
-    方位 <b id="gHead">---</b><br>
-    傾き <b id="gPitch">---</b>°
-    <span id="gAglRow" hidden><br>対地 <b id="gAgl">---</b> m</span>
+  <div id="instr">
+    <button id="compass" type="button" aria-label="北を向く" title="北を向く">
+      <svg width="40" height="40" viewBox="-20 -20 40 40" aria-hidden="true">
+        <circle r="18" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.5"/>
+        <g id="needle">
+          <path d="M0 -11L4.5 0H-4.5Z" fill="#f2665b"/>
+          <path d="M0 11L4.5 0H-4.5Z" fill="currentColor" fill-opacity="0.55"/>
+          <text y="-12.5" text-anchor="middle" font-size="7.5" font-weight="700" fill="#f2665b">N</text>
+        </g>
+      </svg>
+    </button>
+    <div id="gauges" class="panel" aria-live="off">
+      高度 <b id="gAlt">---</b> m<br>
+      方位 <b id="gHead">---</b><br>
+      傾き <b id="gPitch">---</b>°
+      <span id="gAglRow" hidden><br>対地 <b id="gAgl">---</b> m</span>
+    </div>
   </div>
 </div>
 
@@ -276,10 +290,16 @@
     pitchFromSlider = false;
 
     const following = follow && !flying;
-    if (fwd || side || vert || turn || tiltKey || following || pitchDeg !== R(camera.pitch)) {
+    if (turn || flying) northing = false;   // 自分で旋回したら「北を向く」は取りやめ
+    if (fwd || side || vert || turn || tiltKey || following || northing || pitchDeg !== R(camera.pitch)) {
       // 高いところほど速く飛ぶ
       const v = speeds[speedIdx] * Math.max(1, carto.height / 300) * dt;
       heading += D(26.25) * turn * dt;
+      if (northing) {
+        // 近い向きの回り方で、毎秒120度まで北へ回る
+        const d = Cesium.Math.negativePiToPi(-heading), step = D(120) * dt;
+        if (Math.abs(d) <= step) { heading = 0; northing = false; } else heading += Math.sign(d) * step;
+      }
       pitchDeg = Cesium.Math.clamp(pitchDeg + 45 * tiltKey * dt, -89, 0);
       const e = Math.cos(heading) * side + Math.sin(heading) * fwd;
       const n = -Math.sin(heading) * side + Math.cos(heading) * fwd;
@@ -293,6 +313,12 @@
       pitchEl.value = Math.round(pitchDeg);
     }
   });
+
+  // ---- コンパス（針は常に北を指す。押すと北を向く） ----
+  let northing = false;
+  const needle = $("needle");
+  scene.postRender.addEventListener(() => { needle.setAttribute("transform", "rotate(" + (-R(camera.heading)).toFixed(1) + ")"); });
+  $("compass").onclick = () => { if (!flying) northing = true; };
 
   // ---- 対地高度維持（真下の地面・建物からの高さを保つ） ----
   const AGL_MIN = 30;
