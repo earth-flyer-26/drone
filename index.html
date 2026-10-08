@@ -42,6 +42,7 @@
   #side { top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; display: flex; flex-direction: column; gap: 8px; }
   #side .btn { width: 44px; padding: 0; }
   #side svg { display: block; margin: auto; }
+  #side .btn.on { border-color: var(--accent); background: rgba(95, 208, 230, 0.25); color: var(--accent); }
 
   #stick { left: 24px; bottom: calc(28px + env(safe-area-inset-bottom, 0px)); width: 130px; height: 130px; border-radius: 50%; touch-action: none; }
   #knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(95, 208, 230, 0.35); border: 1px solid var(--accent); }
@@ -61,6 +62,13 @@
   .sheet input[type=text], .sheet input[type=password] { width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; font: inherit; color: var(--fg); background: #1a232b; border: 1px solid var(--line); border-radius: 8px; }
   .row { display: flex; gap: 8px; margin-top: 10px; }
   .row button { height: 36px; padding: 0 12px; }
+
+  #aim { left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; }
+  #aim::before, #aim::after { content: ""; position: absolute; background: var(--accent); box-shadow: 0 0 2px #000; }
+  #aim::before { left: 10px; top: 0; width: 2px; height: 22px; }
+  #aim::after { top: 10px; left: 0; height: 2px; width: 22px; }
+  #addr { left: 50%; top: calc(50% + 20px); transform: translateX(-50%); padding: 3px 10px; font-size: 13px; white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+  #addr:empty { display: none; }
 
   #toast { left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 14px 18px; max-width: min(420px, calc(100vw - 48px)); font-size: 14px; line-height: 1.7; text-align: center; }
   #help { left: 12px; top: calc(64px + env(safe-area-inset-top, 0px)); padding: 8px 12px; font-size: 12px; color: var(--muted); line-height: 1.7; }
@@ -88,12 +96,14 @@
     高度 <b id="gAlt">---</b> m<br>
     方位 <b id="gHead">---</b><br>
     傾き <b id="gPitch">---</b>°
+    <span id="gAglRow" hidden><br>対地 <b id="gAgl">---</b> m</span>
   </div>
 </div>
 
 <div id="side" class="hud">
   <button id="fsBtn" class="btn" type="button" aria-label="全画面表示" title="全画面表示"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
   <button id="locBtn" class="btn" type="button" aria-label="現在地へ移動" title="現在地へ移動"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+  <button id="aglBtn" class="btn" type="button" aria-label="地面からの高さを保つ" aria-pressed="false" title="地面からの高さを保つ"><svg width="22" height="20" viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20l6-8 4 4 4-6 6 10"/><path d="M2 12l6-8 4 4 4-6 6 10" stroke-dasharray="2.5 3"/></svg></button>
   <button id="setBtn" class="btn" type="button" aria-label="設定">⚙</button>
 </div>
 
@@ -134,8 +144,11 @@
     <button id="keySave" type="button">保存して読み込む</button>
     <button id="keyClear" type="button">削除</button>
   </div>
-  <p>地図データ：Google（Map Tiles API）。地名検索：国土地理院 地名検索API。</p>
+  <p>地図データ：Google（Map Tiles API）。地名検索・住所表示：国土地理院 地名検索API・逆ジオコーダ。</p>
 </div>
+
+<div id="aim" class="hud" aria-hidden="true"></div>
+<div id="addr" class="hud panel" aria-live="polite"></div>
 
 <div id="toast" class="hud panel" hidden></div>
 
@@ -256,20 +269,59 @@
     if (!pitchFromSlider) pitchDeg = R(camera.pitch);
     pitchFromSlider = false;
 
-    if (fwd || side || vert || turn || tiltKey || pitchDeg !== R(camera.pitch)) {
+    const following = follow && !flying;
+    if (fwd || side || vert || turn || tiltKey || following || pitchDeg !== R(camera.pitch)) {
       // 高いところほど速く飛ぶ
       const v = speeds[speedIdx] * Math.max(1, carto.height / 300) * dt;
       heading += D(26.25) * turn * dt;
       pitchDeg = Cesium.Math.clamp(pitchDeg + 45 * tiltKey * dt, -89, 0);
       const e = Math.cos(heading) * side + Math.sin(heading) * fwd;
       const n = -Math.sin(heading) * side + Math.cos(heading) * fwd;
-      Cesium.Cartesian3.fromElements(e * v, n * v, vert * v * 0.6, off);
+      // 対地高度維持中は ▲▼ で「保つ高さ」を変え、上下の移動はあとでまとめて行う
+      if (following) aglTarget = Math.max(AGL_MIN, aglTarget + vert * v * 0.6);
+      Cesium.Cartesian3.fromElements(e * v, n * v, following ? 0 : vert * v * 0.6, off);
       Cesium.Transforms.eastNorthUpToFixedFrame(camera.positionWC, Cesium.Ellipsoid.WGS84, scratch);
       Cesium.Matrix4.multiplyByPoint(scratch, off, wv);
+      if (following) followGround(wv, dt);
       camera.setView({ destination: wv, orientation: { heading, pitch: D(pitchDeg), roll: 0 } });
       pitchEl.value = Math.round(pitchDeg);
     }
   });
+
+  // ---- 対地高度維持（真下の地面・建物からの高さを保つ） ----
+  const AGL_MIN = 30;
+  let follow = false, flying = false, aglTarget = 0, groundH;
+  const gc = new Cesium.Cartographic();
+  // 真下の高さは、読み込み済みの3D地図から測る（描画の外で0.1秒おき。測れないときは undefined）
+  function measureGround() {
+    groundH = tileset && scene.sampleHeightSupported ? scene.sampleHeight(camera.positionCartographic) : undefined;
+    return groundH;
+  }
+  setInterval(() => { if (follow) measureGround(); }, 100);
+  function followGround(pos, dt) {
+    if (groundH === undefined) return;   // 測れないうちは今の高度のまま
+    const c = Cesium.Cartographic.fromCartesian(pos, Cesium.Ellipsoid.WGS84, gc);
+    const diff = groundH + aglTarget - c.height;
+    // 上がるのは速め、下がるのはゆっくり（急な上下を和らげる）
+    c.height += diff * Math.min(1, dt * (diff > 0 ? 4 : 1.2));
+    Cesium.Cartographic.toCartesian(c, Cesium.Ellipsoid.WGS84, pos);
+  }
+  function startFollow() {
+    const gh = measureGround();
+    aglTarget = Math.max(AGL_MIN, gh === undefined ? AGL_MIN : camera.positionCartographic.height - gh);
+  }
+  $("aglBtn").onclick = () => {
+    follow = !follow;
+    $("aglBtn").classList.toggle("on", follow);
+    $("aglBtn").setAttribute("aria-pressed", follow);
+    $("gAglRow").hidden = !follow;
+    if (follow) {
+      startFollow();
+      toast("地面から " + Math.round(aglTarget) + " m の高さを保ちます。▲▼で高さを変えられます。", 3000);
+    } else {
+      toast("高さの自動調整を止めました。", 2000);
+    }
+  };
 
   // 計器
   const dirs = ["北", "北東", "東", "南東", "南", "南西", "西", "北西"];
@@ -279,12 +331,16 @@
     $("gAlt").textContent = Math.round(c.height).toLocaleString();
     $("gHead").textContent = dirs[Math.round(h / 45) % 8] + " " + Math.round(h) + "°";
     $("gPitch").textContent = Math.round(R(camera.pitch));
+    if (follow) $("gAgl").textContent = groundH === undefined ? "---" : Math.round(c.height - groundH).toLocaleString();
     if (document.activeElement !== pitchEl) pitchEl.value = Math.round(R(camera.pitch));
   }, 200);
 
   // 指定地点を少し南の上空から北向きに見下ろす位置へ飛ぶ
   function flyToPlace(lon, lat) {
-    camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat - 0.0045, 450), orientation: { heading: 0, pitch: D(-30), roll: 0 }, duration: 3 });
+    // 飛んでいる間は対地高度維持を休み、着いたらその場の高さを保ち直す
+    flying = true;
+    const done = () => setTimeout(() => { flying = false; if (follow) startFollow(); }, 0);
+    camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat - 0.0045, 450), orientation: { heading: 0, pitch: D(-30), roll: 0 }, duration: 3, complete: done, cancel: done });
   }
 
   // ---- 地名検索（国土地理院） ----
@@ -304,6 +360,45 @@
       toast("地名検索に失敗しました。インターネット接続を確認してください。", 3500);
     }
   });
+
+  // ---- 画面中央の地点の住所（国土地理院の逆ジオコーダ。町丁目まで） ----
+  // 市区町村コード → 「東京都中央区」の対応表は、国土地理院の一覧を文字列として読むだけで実行はしない
+  const muni = {};
+  fetch("https://maps.gsi.go.jp/js/muni.js").then((r) => r.text()).then((t) => {
+    for (const m of t.matchAll(/MUNI_ARRAY\["(\d+)"\]\s*=\s*'([^']*)'/g)) {
+      const p = m[2].split(",");
+      muni[m[1]] = p[1] + p[3].replace(/[\s　]/g, "");
+    }
+  }).catch(() => {});
+
+  const addrEl = $("addr"), center = new Cesium.Cartesian2();
+  let lastView = "", stillSince = 0, doneView = "", lastPt = null, addrSeq = 0;
+  setInterval(async () => {
+    const c = camera.positionCartographic;
+    const view = [c.longitude, c.latitude, c.height, camera.heading, camera.pitch].map((x) => x.toFixed(6)).join();
+    const now = performance.now();
+    if (view !== lastView) { lastView = view; stillSince = now; return; }
+    if (view === doneView || now - stillSince < 1000 || !tileset) return;
+
+    // 止まってから1秒たったら、照準の先の地面の位置を3D地図から測る
+    center.x = viewer.canvas.clientWidth / 2; center.y = viewer.canvas.clientHeight / 2;
+    const pos = scene.pickPositionSupported ? scene.pickPosition(center) : undefined;
+    if (!pos) { addrEl.textContent = ""; return; }   // 空を向いている・地図の読み込み中（次の回にもう一度測る）
+    doneView = view;
+    if (lastPt && Cesium.Cartesian3.distance(pos, lastPt) < 15) return;   // ほぼ同じ地点なら調べ直さない
+    lastPt = pos;
+
+    const g = Cesium.Cartographic.fromCartesian(pos), seq = ++addrSeq;
+    try {
+      const res = await fetch(`https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=${R(g.latitude).toFixed(6)}&lon=${R(g.longitude).toFixed(6)}`);
+      const r = (await res.json()).results;
+      if (seq !== addrSeq) return;   // 途中で別の地点を調べ始めていたら捨てる
+      const town = r && r.lv01Nm && r.lv01Nm !== "－" ? r.lv01Nm : "";
+      addrEl.textContent = r ? (muni[String(parseInt(r.muniCd, 10))] || "") + town || "住所なし" : "住所なし";
+    } catch (e) {
+      if (seq === addrSeq) { addrEl.textContent = ""; lastPt = null; }
+    }
+  }, 300);
 
   // ---- 現在地（位置情報はこのページの中でだけ使い、送信・保存しない） ----
   $("locBtn").onclick = () => {
