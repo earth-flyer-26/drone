@@ -54,7 +54,8 @@
   #instr { margin-left: auto; display: flex; gap: 8px; align-items: flex-start; }
   #reliefBtn { width: 44px; padding: 0; }
   #reliefBtn svg { display: block; margin: auto; }
-  #reliefBtn.on { border-color: var(--accent); background: rgba(95, 208, 230, 0.25); color: var(--accent); }
+  /* オンのボタンは色を反転させ、起伏モードの明るい地形の上でも目立たせる */
+  #reliefBtn.on { border-color: var(--accent); background: var(--accent); color: var(--panel-solid); }
   #compass { width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
   #gauges { padding: 8px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; min-width: 150px; font-variant-numeric: tabular-nums; }
   #gauges b { color: var(--accent); font-weight: 500; }
@@ -62,7 +63,7 @@
   #side { top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; display: flex; flex-direction: column; gap: 8px; }
   #side .btn { width: 44px; padding: 0; }
   #side svg { display: block; margin: auto; }
-  #side .btn.on { border-color: var(--accent); background: rgba(95, 208, 230, 0.25); color: var(--accent); }
+  #side .btn.on { border-color: var(--accent); background: var(--accent); color: var(--panel-solid); }
 
   #stick { left: 24px; bottom: calc(28px + env(safe-area-inset-bottom, 0px)); width: 130px; height: 130px; border-radius: 50%; touch-action: none; }
   #knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(95, 208, 230, 0.35); border: 1px solid var(--accent); }
