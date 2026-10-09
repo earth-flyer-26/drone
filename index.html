@@ -83,11 +83,15 @@
   .row { display: flex; gap: 8px; margin-top: 10px; }
   .row button { height: 36px; padding: 0 12px; }
 
+  #addr { left: 50%; transform: translateX(-50%); bottom: calc(160px + env(safe-area-inset-bottom, 0px)); padding: 4px 12px; font-size: 13px; white-space: nowrap; max-width: calc(100vw - 32px); box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+  /* 横向きのスマホなど高さが低い画面では、右側の縦並びを詰めて右下の操作ボタンと重ならないようにする */
+  @media (max-height: 420px) { #side { gap: 6px; } #side .btn { height: 36px; } }
   #toast { left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 14px 18px; max-width: min(420px, calc(100vw - 48px)); font-size: 14px; line-height: 1.7; text-align: center; }
   #help { left: 12px; top: calc(64px + env(safe-area-inset-top, 0px)); padding: 8px 12px; font-size: 12px; color: var(--muted); line-height: 1.7; }
   @media (max-width: 700px), (pointer: coarse) { #help { display: none; } }
   @media (max-width: 700px) { .sheet { top: calc(150px + env(safe-area-inset-top, 0px)); } }
   @media (max-width: 520px) {
+    #addr { bottom: calc(245px + env(safe-area-inset-bottom, 0px)); }
     #stick { width: 112px; height: 112px; left: 16px; }
     #pad { right: 16px; grid-template-columns: repeat(3, 46px); grid-template-rows: repeat(2, 46px); }
     #tilt { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
@@ -130,6 +134,7 @@
   <button id="fsBtn" class="btn" type="button" aria-label="全画面表示" title="全画面表示"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
   <button id="locBtn" class="btn" type="button" aria-label="現在地へ移動" title="現在地へ移動"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
   <button id="aglBtn" class="btn" type="button" aria-label="地面からの高さを保つ" aria-pressed="false" title="地面からの高さを保つ"><svg width="22" height="20" viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20l6-8 4 4 4-6 6 10"/><path d="M2 12l6-8 4 4 4-6 6 10" stroke-dasharray="2.5 3"/></svg></button>
+  <button id="addrBtn" class="btn" type="button" aria-label="真下の住所を調べる" title="真下の住所を調べる"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s7-7.2 7-12.5a7 7 0 0 0-14 0C5 14.8 12 22 12 22z"/><circle cx="12" cy="9.5" r="2.6"/></svg></button>
   <button id="setBtn" class="btn" type="button" aria-label="設定">⚙</button>
 </div>
 
@@ -170,9 +175,10 @@
     <button id="keySave" type="button">保存して読み込む</button>
     <button id="keyClear" type="button">削除</button>
   </div>
-  <p>地図データ：Google（Map Tiles API）。地名検索：© OpenStreetMap contributors（Nominatim）、国土地理院 地名検索API。起伏モード：国土地理院（標高タイル・色別標高図・陰影起伏図）。</p>
+  <p>地図データ：Google（Map Tiles API）。地名検索：© OpenStreetMap contributors（Nominatim）、国土地理院 地名検索API。住所表示：国土地理院 逆ジオコーダ。起伏モード：国土地理院（標高タイル・色別標高図・陰影起伏図）。</p>
 </div>
 
+<div id="addr" class="hud panel" aria-live="polite" hidden></div>
 <div id="toast" class="hud panel" hidden></div>
 
 <script>
@@ -449,6 +455,36 @@
       ? "起伏モード：国土地理院の標高データで地形を表示しています（日本国内のみ。建物や木は表示されません）。"
       : "Google の3D地図に戻しました。", 3500);
   };
+
+  // ---- 機体の真下の住所（国土地理院の逆ジオコーダ。町丁目まで）。ボタンを押したときに1回だけ調べ、動き出したら消す ----
+  // 3D地図から地点を割り出さず、カメラのいる位置の緯度・経度をそのまま使う
+  const addrEl = $("addr"), addrBtn = $("addrBtn");
+  let addrAt = null, addrSeq = 0;
+  function hideAddr() { addrAt = null; addrSeq++; addrEl.hidden = true; addrBtn.classList.remove("on"); }
+  addrBtn.onclick = async () => {
+    const c = camera.positionCartographic, lon = R(c.longitude), lat = R(c.latitude), seq = ++addrSeq;
+    addrAt = Cesium.Cartesian3.fromDegrees(lon, lat);
+    addrEl.textContent = "住所を調べています…"; addrEl.hidden = false; addrBtn.classList.add("on");
+    try {
+      const [res, muni] = await Promise.all([
+        fetch(`https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=${lat.toFixed(6)}&lon=${lon.toFixed(6)}`).then((r) => r.json()),
+        loadMuni()
+      ]);
+      if (seq !== addrSeq) return;   // 待っている間に動き出した・押し直した
+      const r = res && res.results;
+      const town = r && r.lv01Nm && r.lv01Nm !== "－" ? r.lv01Nm : "";
+      const city = r ? muni[String(parseInt(r.muniCd, 10))] || "" : "";
+      addrEl.textContent = city || town ? "真下：" + [city, town].filter(Boolean).join(" ") : "真下：住所なし（海の上・日本の外など）";
+    } catch (e) {
+      if (seq === addrSeq) addrEl.textContent = "住所を調べられませんでした";
+    }
+  };
+  // 調べた地点から地図上で 30m 以上動いたら、古い住所なので消す（向きや高さを変えるだけなら残す）
+  setInterval(() => {
+    if (!addrAt) return;
+    const c = camera.positionCartographic;
+    if (Cesium.Cartesian3.distance(Cesium.Cartesian3.fromRadians(c.longitude, c.latitude), addrAt) > 30) hideAddr();
+  }, 300);
 
   // ---- 描き直しの見張り役：操作中・飛行中・高さ維持中・北へ回転中だけ、毎コマ描き直しを頼む ----
   (function watch() {
