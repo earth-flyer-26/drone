@@ -26,6 +26,7 @@
   /* 長押しで文字が選択され、スマホの選択メニューが出るのを防ぐ（入力欄は除く） */
   body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   input { user-select: text; -webkit-user-select: text; }
+  img { -webkit-user-drag: none; }
   #map { position: absolute; inset: 0; }
   .cesium-viewer-bottom { bottom: 4px; }
   .hud { position: absolute; z-index: 5; }
@@ -176,7 +177,7 @@
     <button id="keySave" type="button">保存して読み込む</button>
     <button id="keyClear" type="button">削除</button>
   </div>
-  <p>地図データ：Google（Map Tiles API）。地名検索：© OpenStreetMap contributors（Nominatim）、国土地理院 地名検索API。住所表示：国土地理院 逆ジオコーダ。起伏モード：国土地理院（標高タイル・色別標高図・陰影起伏図）。</p>
+  <p>地図データ：Google（Map Tiles API）。地名検索：© OpenStreetMap contributors（Nominatim）、Wikipedia 日本語版、国土地理院 地名検索API。住所表示：国土地理院 逆ジオコーダ。起伏モード：国土地理院（標高タイル・色別標高図・陰影起伏図）。</p>
 </div>
 
 <div id="addr" class="hud panel" aria-live="polite" hidden></div>
@@ -255,6 +256,8 @@
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
   });
   addEventListener("keyup", (e) => keys.delete(e.code));
+  // 長押しで画像や文字のメニュー（ダウンロード・共有など）が出ないようにする。入力欄は貼り付けに使うので除く
+  addEventListener("contextmenu", (e) => { if (!(e.target.closest && e.target.closest("input"))) e.preventDefault(); });
   addEventListener("blur", () => keys.clear());
 
   // スティック
@@ -552,6 +555,17 @@
     });
   }
 
+  // 日本語版ウィキペディア：観光地・名所に強い。位置情報のある記事だけを使う
+  async function searchWiki(q) {
+    const url = "https://ja.wikipedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrlimit=10&prop=coordinates%7Cdescription&colimit=max&gsrsearch=" + encodeURIComponent(q);
+    const pages = Object.values(((await (await fetch(url)).json()).query || {}).pages || {}).sort((a, b) => a.index - b.index);
+    // 記事名に検索語のどれかが含まれるものだけ（「・」や空白の違いは無視）。無関係な記事が混ざるのを防ぐ
+    const norm = (t) => t.replace(/[・\s　]/g, "");
+    const words = q.split(/[\s　]+/).map(norm).filter((w) => w.length >= 2);
+    return pages.filter((p) => p.coordinates && words.some((w) => norm(p.title).includes(w))).slice(0, 4).map((p) => (
+      { name: p.title, area: p.description || "", lon: p.coordinates[0].lon, lat: p.coordinates[0].lat, src: "Wikipedia" }));
+  }
+
   const resultsEl = $("results"), goBtn = $("searchForm").querySelector("button");
   function closeResults() { resultsEl.hidden = true; resultsEl.textContent = ""; }
   function go(p) { closeResults(); flyToPlace(p.lon, p.lat); toast(p.name + (p.area ? "（" + p.area + "）" : "") + " へ向かいます", 2500); $("q").blur(); }
@@ -562,13 +576,13 @@
     if (goBtn.disabled) return;
     goBtn.disabled = true;   // OpenStreetMap の利用規約（1秒に1回まで）を守るため、続けて押せないようにする
     closeResults();
-    const [osm, gsi] = await Promise.allSettled([searchOsm(q), searchGsi(q)]);
+    const [osm, wiki, gsi] = await Promise.allSettled([searchOsm(q), searchWiki(q), searchGsi(q)]);
     setTimeout(() => { goBtn.disabled = false; }, 1000);
-    if (osm.status === "rejected" && gsi.status === "rejected") { toast("地名検索に失敗しました。インターネット接続を確認してください。", 3500); return; }
+    if (osm.status === "rejected" && wiki.status === "rejected" && gsi.status === "rejected") { toast("地名検索に失敗しました。インターネット接続を確認してください。", 3500); return; }
 
-    // OpenStreetMap を先に並べ、ほぼ同じ場所（300m以内）の重複は省く
+    // ウィキペディア（記事名で絞っているので外れが少ない）、OpenStreetMap、国土地理院の順に並べ、ほぼ同じ場所（300m以内）の重複は省く
     const list = [];
-    for (const p of [...(osm.value || []), ...(gsi.value || [])]) {
+    for (const p of [...(wiki.value || []), ...(osm.value || []), ...(gsi.value || [])]) {
       if (!list.some((o) => Math.abs(o.lat - p.lat) < 0.003 && Math.abs(o.lon - p.lon) < 0.0035 && o.name === p.name)) list.push(p);
     }
     if (!list.length) { toast("「" + q + "」は見つかりませんでした。別の言い方でお試しください。", 3500); return; }
@@ -585,7 +599,7 @@
     });
     const foot = document.createElement("div");
     foot.className = "foot";
-    foot.innerHTML = '<span>検索：© OpenStreetMap contributors／国土地理院</span><button type="button" aria-label="候補を閉じる">×</button>';
+    foot.innerHTML = '<span>検索：© OpenStreetMap contributors／Wikipedia／国土地理院</span><button type="button" aria-label="候補を閉じる">×</button>';
     foot.querySelector("button").onclick = closeResults;
     resultsEl.append(foot);
     resultsEl.hidden = false;
