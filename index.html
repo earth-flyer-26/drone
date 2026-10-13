@@ -490,9 +490,11 @@
     if (Cesium.Cartesian3.distance(Cesium.Cartesian3.fromRadians(c.longitude, c.latitude), addrAt) > 30) hideAddr();
   }, 300);
 
-  // ---- 描き直しの見張り役：操作中・飛行中・高さ維持中・北へ回転中だけ、毎コマ描き直しを頼む ----
+  // ---- 描き直しの見張り役：操作中・飛行中・高さ維持中・北へ回転中・地図の読み込み中だけ、毎コマ描き直しを頼む ----
+  // 読み込み中も描き続けないと、届いた地図が次に触るまで画面に出ないことがある
+  const loading = () => (tileset && tileset.show && !tileset.tilesLoaded) || (reliefOn && scene.globe && !scene.globe.tilesLoaded);
   (function watch() {
-    if (keys.size || stickId !== null || held.up || held.down || held.left || held.right || follow || northing || flying) scene.requestRender();
+    if (keys.size || stickId !== null || held.up || held.down || held.left || held.right || follow || northing || flying || loading()) scene.requestRender();
     requestAnimationFrame(watch);
   })();
 
