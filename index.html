@@ -578,7 +578,15 @@
     if (goBtn.disabled) return;
     goBtn.disabled = true;   // OpenStreetMap の利用規約（1秒に1回まで）を守るため、続けて押せないようにする
     closeResults();
-    const [osm, wiki, gsi] = await Promise.allSettled([searchOsm(q), searchWiki(q), searchGsi(q)]);
+    const t0 = Date.now();
+    let [osm, wiki, gsi] = await Promise.allSettled([searchOsm(q), searchWiki(q), searchGsi(q)]);
+    // OSM は空白で区切った言葉を別々の単語として探すため、「泉水 キャンプ」では見つからず「泉水キャンプ」なら見つかることがある。
+    // 空白入りで OSM が0件だったときだけ、空白を抜いてもう一度聞く（1秒1回の決まりを守るため、前の問い合わせから1秒あける）
+    const joined = q.replace(/[\s　]+/g, "");
+    if (joined !== q && osm.status === "fulfilled" && !osm.value.length) {
+      await new Promise((r) => setTimeout(r, Math.max(0, 1000 - (Date.now() - t0))));
+      [osm] = await Promise.allSettled([searchOsm(joined)]);
+    }
     setTimeout(() => { goBtn.disabled = false; }, 1000);
     if (osm.status === "rejected" && wiki.status === "rejected" && gsi.status === "rejected") { toast("地名検索に失敗しました。インターネット接続を確認してください。", 3500); return; }
 
