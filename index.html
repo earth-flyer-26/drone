@@ -53,10 +53,10 @@
   #results .foot button { width: 36px; height: 32px; padding: 0; border-radius: 8px; font-size: 16px; }
   .btn { height: 40px; padding: 0 12px; white-space: nowrap; }
   #instr { margin-left: auto; display: flex; gap: 8px; align-items: flex-start; }
-  #reliefBtn { width: 44px; padding: 0; }
-  #reliefBtn svg { display: block; margin: auto; }
+  #reliefBtn, #orbitBtn { width: 44px; padding: 0; }
+  #reliefBtn svg, #orbitBtn svg { display: block; margin: auto; }
   /* オンのボタンは色を反転させ、起伏モードの明るい地形の上でも目立たせる */
-  #reliefBtn.on { border-color: var(--accent); background: var(--accent); color: var(--panel-solid); }
+  #reliefBtn.on, #orbitBtn.on { border-color: var(--accent); background: var(--accent); color: var(--panel-solid); }
   #compass { width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
   #gauges { padding: 8px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; min-width: 150px; font-variant-numeric: tabular-nums; }
   #gauges b { color: var(--accent); font-weight: 500; }
@@ -113,6 +113,7 @@
   </form>
   <button id="speedBtn" class="btn" type="button" title="速度を切り替え（Shift キーでも可）">●●○</button>
   <button id="reliefBtn" class="btn" type="button" aria-label="起伏モード" aria-pressed="false" title="起伏モード（土地の起伏を表示）"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 17c3-1 4-5 9-5s6 4 9 5"/><path d="M6 13c2-1 3-4 6-4s4 3 6 4"/><path d="M9.5 9c1-1 1.5-2.5 2.5-2.5s1.5 1.5 2.5 2.5"/><path d="M2 21h20"/></svg></button>
+  <button id="orbitBtn" class="btn" type="button" aria-label="周回撮影" aria-pressed="false" title="周回撮影（見ている場所の周りを回る）"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4A8 8 0 1 0 19.4 9"/><path d="M15.6 8.4l3.8.6.9-3.7"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg></button>
   <div id="instr">
     <button id="compass" type="button" aria-label="北を向く" title="北を向く">
       <svg width="40" height="40" viewBox="-20 -20 40 40" aria-hidden="true">
@@ -293,7 +294,7 @@
   // 傾きスライダー
   const pitchEl = $("pitch");
   let pitchDeg = -25, pitchFromSlider = false;
-  pitchEl.addEventListener("input", () => { pitchDeg = +pitchEl.value; pitchFromSlider = true; scene.requestRender(); });
+  pitchEl.addEventListener("input", () => { stopOrbit(); pitchDeg = +pitchEl.value; pitchFromSlider = true; scene.requestRender(); });
 
   // ---- 毎フレームの移動 ----
   const scratch = new Cesium.Matrix4(), off = new Cesium.Cartesian3(), wv = new Cesium.Cartesian3();
@@ -307,6 +308,10 @@
     const vert = (held.up ? 1 : 0) - (held.down ? 1 : 0) + k("ArrowUp") - k("ArrowDown");
     const turn = (held.right ? 1 : 0) - (held.left ? 1 : 0) + k("ArrowRight") - k("ArrowLeft");
     const tiltKey = k("KeyX") - k("KeyZ");
+
+    // 周回中：何か操作したら止めて普通の操縦に戻る。操作がなければ回り続ける
+    if (orbit && (fwd || side || vert || turn || tiltKey)) stopOrbit();
+    if (orbit) { if (orbit.ready && !flying) stepOrbit(dt); return; }
 
     const carto = camera.positionCartographic;
     let heading = camera.heading;
@@ -342,7 +347,77 @@
   let northing = false;
   const needle = $("needle");
   scene.postRender.addEventListener(() => { needle.setAttribute("transform", "rotate(" + R(camera.heading).toFixed(1) + ")"); });
-  $("compass").onclick = () => { if (!flying) northing = true; };
+  $("compass").onclick = () => { if (!flying) { stopOrbit(); northing = true; } };
+
+  // ---- 周回撮影（中心を画面の真ん中に見ながら、今の高さと距離のまま1周約60秒で反時計回りに回る） ----
+  // 中心：検索・現在地で飛んできた場所の近く（1km以内）ならその場所。それ以外は画面の真ん中に見えているあたり
+  // 画面の真ん中の地点は、3D地図から割り出さず（誤差が大きかったため）、高さと傾きから計算する
+  const ORBIT_SEC = 60, orbitBtn = $("orbitBtn");
+  let orbit = null, lastPlace = null;
+  const ofr = new Cesium.Matrix4(), oinv = new Cesium.Matrix4(), oloc = new Cesium.Cartesian3(), opos = new Cesium.Cartesian3();
+  // ある地点の地面（建物があれば屋上）の高さ。起伏モードは地形から、Google の地図は読み込み済みの3D地図から、測れなければ国土地理院の標高API
+  async function groundAt(lon, lat) {
+    const c = Cesium.Cartographic.fromDegrees(lon, lat);
+    let h = reliefOn && scene.globe ? scene.globe.getHeight(c) : tileset && tileset.show && scene.sampleHeightSupported ? scene.sampleHeight(c) : undefined;
+    if (h === undefined) { const e = await elevation(lon, lat); h = e === null ? undefined : e + GEOID; }
+    return h;
+  }
+  function stopOrbit() {
+    if (!orbit) return;
+    orbit = null;
+    orbitBtn.classList.remove("on");
+    orbitBtn.setAttribute("aria-pressed", "false");
+  }
+  async function startOrbit() {
+    const me = orbit = { ready: false };
+    orbitBtn.classList.add("on");
+    orbitBtn.setAttribute("aria-pressed", "true");
+    const c = camera.positionCartographic, camLon = R(c.longitude), camLat = R(c.latitude), camH = c.height;
+    let lon, lat, label;
+    const near = lastPlace && Cesium.Cartesian3.distance(Cesium.Cartesian3.fromDegrees(camLon, camLat), Cesium.Cartesian3.fromDegrees(lastPlace.lon, lastPlace.lat)) < 1000;
+    if (near) {
+      ({ lon, lat } = lastPlace); label = lastPlace.name ? lastPlace.name + " の" : "目的地の";
+    } else {
+      // 真下の地面からの高さと、見下ろす角度から、視線が地面に届くまでの水平距離を出す（ほぼ水平なら前方1km。100m〜3kmの範囲）
+      const g0 = await groundAt(camLon, camLat);
+      if (orbit !== me) return;
+      const agl = Math.max(camH - (g0 ?? 0), 10), down = -camera.pitch;
+      const dist = down < D(5) ? 1000 : Cesium.Math.clamp(agl / Math.tan(down), 100, 3000);
+      const hd = camera.heading;
+      lat = camLat + R(dist * Math.cos(hd) / 6378137);
+      lon = camLon + R(dist * Math.sin(hd) / (6378137 * Math.cos(c.latitude)));
+      label = "画面の真ん中あたりの";
+    }
+    const gh = await groundAt(lon, lat);
+    if (orbit !== me) return;   // 待っている間に止めた・操作した
+    // 中心を原点とする「東・北・上」の座標で、カメラの位置（角度・距離・高さ）を覚えておく
+    Cesium.Transforms.eastNorthUpToFixedFrame(Cesium.Cartesian3.fromDegrees(lon, lat, gh ?? 0), Cesium.Ellipsoid.WGS84, me.frame = new Cesium.Matrix4());
+    Cesium.Matrix4.inverseTransformation(me.frame, oinv);
+    Cesium.Matrix4.multiplyByPoint(oinv, camera.positionWC, oloc);
+    me.r = Math.max(Math.hypot(oloc.x, oloc.y), 50);
+    me.a = Math.atan2(oloc.x, oloc.y);   // 中心から見たカメラの方角（北から時計回り）
+    me.u = oloc.z;
+    me.h0 = camera.heading; me.p0 = camera.pitch; me.t = 0;   // 向きは最初の1.5秒でなめらかに中心へ向ける
+    me.ready = true;
+    toast(label + "周りを回ります（1周約" + ORBIT_SEC + "秒）。操作すると止まります。", 3000);
+  }
+  function stepOrbit(dt) {
+    const o = orbit;
+    o.a -= 2 * Math.PI / ORBIT_SEC * dt;   // 上から見て反時計回り
+    o.t = Math.min(1, o.t + dt / 1.5);
+    Cesium.Cartesian3.fromElements(o.r * Math.sin(o.a), o.r * Math.cos(o.a), o.u, oloc);
+    Cesium.Matrix4.multiplyByPoint(o.frame, oloc, opos);
+    const s = o.t * o.t * (3 - 2 * o.t);
+    const heading = o.h0 + Cesium.Math.negativePiToPi(o.a + Math.PI - o.h0) * s;
+    const pitch = o.p0 + (-Math.atan2(o.u, o.r) - o.p0) * s;
+    camera.setView({ destination: opos, orientation: { heading, pitch, roll: 0 } });
+  }
+  orbitBtn.onclick = () => {
+    if (orbit) { stopOrbit(); toast("周回を止めました。", 2000); return; }
+    if (flying) return;
+    northing = false;
+    startOrbit();
+  };
 
   // ---- 対地高度維持（真下の地面・建物からの高さを保つ） ----
   const AGL_MIN = 30;
@@ -490,11 +565,11 @@
     if (Cesium.Cartesian3.distance(Cesium.Cartesian3.fromRadians(c.longitude, c.latitude), addrAt) > 30) hideAddr();
   }, 300);
 
-  // ---- 描き直しの見張り役：操作中・飛行中・高さ維持中・北へ回転中・地図の読み込み中だけ、毎コマ描き直しを頼む ----
+  // ---- 描き直しの見張り役：操作中・飛行中・高さ維持中・北へ回転中・周回中・地図の読み込み中だけ、毎コマ描き直しを頼む ----
   // 読み込み中も描き続けないと、届いた地図が次に触るまで画面に出ないことがある
   const loading = () => (tileset && tileset.show && !tileset.tilesLoaded) || (reliefOn && scene.globe && !scene.globe.tilesLoaded);
   (function watch() {
-    if (keys.size || stickId !== null || held.up || held.down || held.left || held.right || follow || northing || flying || loading()) scene.requestRender();
+    if (keys.size || stickId !== null || held.up || held.down || held.left || held.right || follow || northing || flying || orbit || loading()) scene.requestRender();
     requestAnimationFrame(watch);
   })();
 
@@ -519,8 +594,10 @@
       return typeof e === "number" ? e : null;
     } catch (err) { return null; }
   }
-  async function flyToPlace(lon, lat) {
+  async function flyToPlace(lon, lat, name) {
     // 飛んでいる間は対地高度維持を休み、着いたらその場の高さを保ち直す
+    stopOrbit();
+    lastPlace = { lon, lat, name };   // 周回撮影の中心に使う
     flying = true;
     const done = () => setTimeout(() => { flying = false; if (follow) startFollow(); }, 0);
     // 目的地と、そこを眺める位置（少し南）の地面のうち高い方から 450m 上へ。山の中に入らないようにする
@@ -570,7 +647,7 @@
 
   const resultsEl = $("results"), goBtn = $("searchForm").querySelector("button");
   function closeResults() { resultsEl.hidden = true; resultsEl.textContent = ""; }
-  function go(p) { closeResults(); flyToPlace(p.lon, p.lat); toast(p.name + (p.area ? "（" + p.area + "）" : "") + " へ向かいます", 2500); $("q").blur(); }
+  function go(p) { closeResults(); flyToPlace(p.lon, p.lat, p.name); toast(p.name + (p.area ? "（" + p.area + "）" : "") + " へ向かいます", 2500); $("q").blur(); }
   $("searchForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const q = $("q").value.trim();
@@ -622,7 +699,7 @@
     if (!navigator.geolocation) { toast("このブラウザでは現在地を使えません。", 3000); return; }
     toast("現在地を調べています…");
     navigator.geolocation.getCurrentPosition(
-      (pos) => { flyToPlace(pos.coords.longitude, pos.coords.latitude); toast("現在地へ向かいます", 2500); },
+      (pos) => { flyToPlace(pos.coords.longitude, pos.coords.latitude, "現在地"); toast("現在地へ向かいます", 2500); },
       (err) => toast(err.code === 1
         ? "位置情報の利用が許可されていません。ブラウザの設定で、このサイトの位置情報を許可してください。"
         : "現在地を取得できませんでした。しばらくしてからお試しください。", 4000),
