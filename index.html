@@ -58,6 +58,9 @@
   #reliefBtn svg, #mapBtn svg, #orbitBtn svg { display: block; margin: auto; }
   /* オンのボタンは色を反転させ、起伏モードの明るい地形の上でも目立たせる */
   #reliefBtn.on, #mapBtn.on, #orbitBtn.on { border-color: var(--accent); background: var(--accent); color: var(--panel-solid); }
+  /* 設定と出典（ⓘ）：操縦中に触れない上部に、小さく控えめに置く */
+  #setBtn { width: 32px; height: 32px; padding: 0; margin-top: 4px; border-radius: 50%; color: var(--muted); }
+  #setBtn svg { display: block; margin: auto; }
   #compass { width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
   #gauges { padding: 8px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; min-width: 150px; font-variant-numeric: tabular-nums; }
   #gauges b { color: var(--accent); font-weight: 500; }
@@ -116,6 +119,7 @@
   <button id="reliefBtn" class="btn" type="button" aria-label="起伏モード" aria-pressed="false" title="起伏モード（土地の起伏を表示）"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 17c3-1 4-5 9-5s6 4 9 5"/><path d="M6 13c2-1 3-4 6-4s4 3 6 4"/><path d="M9.5 9c1-1 1.5-2.5 2.5-2.5s1.5 1.5 2.5 2.5"/><path d="M2 21h20"/></svg></button>
   <button id="mapBtn" class="btn" type="button" aria-label="地図モード" aria-pressed="false" title="地図モード（国土地理院の地図を表示）"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l6-2.5 6 2.5 6-2.5v14.5l-6 2.5-6-2.5-6 2.5z"/><path d="M9 3.5v14.5M15 6v14.5"/></svg></button>
   <button id="orbitBtn" class="btn" type="button" aria-label="周回撮影" aria-pressed="false" title="周回撮影（見ている場所の周りを回る）"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4A8 8 0 1 0 19.4 9"/><path d="M15.6 8.4l3.8.6.9-3.7"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg></button>
+  <button id="setBtn" class="btn" type="button" aria-label="設定と出典" title="設定と出典"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 11v6"/><circle cx="12" cy="7.5" r="0.6" fill="currentColor"/></svg></button>
   <div id="instr">
     <button id="compass" type="button" aria-label="北を向く" title="北を向く">
       <svg width="40" height="40" viewBox="-20 -20 40 40" aria-hidden="true">
@@ -140,7 +144,6 @@
   <button id="locBtn" class="btn" type="button" aria-label="現在地へ移動" title="現在地へ移動"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
   <button id="aglBtn" class="btn" type="button" aria-label="地面からの高さを保つ" aria-pressed="false" title="地面からの高さを保つ"><svg width="22" height="20" viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20l6-8 4 4 4-6 6 10"/><path d="M2 12l6-8 4 4 4-6 6 10" stroke-dasharray="2.5 3"/></svg></button>
   <button id="addrBtn" class="btn" type="button" aria-label="真下の住所を調べる" title="真下の住所を調べる"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s7-7.2 7-12.5a7 7 0 0 0-14 0C5 14.8 12 22 12 22z"/><circle cx="12" cy="9.5" r="2.6"/></svg></button>
-  <button id="setBtn" class="btn" type="button" aria-label="設定">⚙</button>
 </div>
 
 <div id="help" class="hud panel">
@@ -202,6 +205,8 @@
     clearTimeout(toastTimer);
     if (ms) toastTimer = setTimeout(() => { t.hidden = true; }, ms);
   }
+  // 注意書きは指で触るとすぐ消える
+  $("toast").addEventListener("pointerdown", () => { $("toast").hidden = true; clearTimeout(toastTimer); });
 
   if (typeof Cesium === "undefined") { toast("地図の部品（CesiumJS）を読み込めませんでした。インターネット接続を確認してください。"); return; }
 
@@ -224,7 +229,7 @@
   async function loadTiles() {
     const key = store.get(KEY, "");
     if (tileset) { scene.primitives.remove(tileset); tileset = null; }
-    if (!key) { toast("右上の ⚙ から API キーを登録すると、地図が表示されます。"); return; }
+    if (!key) { toast("上の ⓘ から API キーを登録すると、地図が表示されます。"); return; }
     toast("地図を読み込んでいます…");
     try {
       tileset = await Cesium.Cesium3DTileset.fromUrl("https://tile.googleapis.com/v1/3dtiles/root.json?key=" + encodeURIComponent(key), { showCreditsOnScreen: true });
@@ -283,7 +288,7 @@
 
   // 右下のボタン（押している間だけ動く）
   const held = { up: false, down: false, left: false, right: false };
-  document.querySelectorAll("#pad button").forEach((b) => {
+  document.querySelectorAll("#pad button[data-act]").forEach((b) => {
     const act = b.dataset.act;
     const on = (e) => { e.preventDefault(); b.setPointerCapture(e.pointerId); held[act] = true; b.classList.add("on"); };
     const off = () => { held[act] = false; b.classList.remove("on"); };
@@ -401,7 +406,7 @@
     me.u = oloc.z;
     me.h0 = camera.heading; me.p0 = camera.pitch; me.t = 0;   // 向きは最初の1.5秒でなめらかに中心へ向ける
     me.ready = true;
-    toast(label + "周りを回ります（1周約" + ORBIT_SEC + "秒）。操作すると止まります。", 3000);
+    toast(label + "周りを回ります（1周約" + ORBIT_SEC + "秒）。操作すると止まります。", 2000);
   }
   function stepOrbit(dt) {
     const o = orbit;
@@ -415,7 +420,7 @@
     camera.setView({ destination: opos, orientation: { heading, pitch, roll: 0 } });
   }
   orbitBtn.onclick = () => {
-    if (orbit) { stopOrbit(); toast("周回を止めました。", 2000); return; }
+    if (orbit) { stopOrbit(); toast("周回を止めました。", 1500); return; }
     if (flying) return;
     northing = false;
     startOrbit();
@@ -452,9 +457,9 @@
     $("gAglRow").hidden = !follow;
     if (follow) {
       startFollow();
-      toast("地面から " + Math.round(aglTarget) + " m の高さを保ちます。▲▼で高さを変えられます。", 3000);
+      toast("地面から " + Math.round(aglTarget) + " m の高さを保ちます。▲▼で高さを変えられます。", 2000);
     } else {
-      toast("高さの自動調整を止めました。", 2000);
+      toast("高さの自動調整を止めました。", 1500);
     }
   };
 
@@ -543,13 +548,13 @@
     setGsiMode(gsiMode === "relief" ? null : "relief");
     toast(gsiMode
       ? "起伏モード：国土地理院の標高データで地形を表示しています（日本国内のみ。建物や木は表示されません）。"
-      : "Google の3D地図に戻しました。", 3500);
+      : "Google の3D地図に戻しました。", gsiMode ? 2000 : 1500);
   };
   $("mapBtn").onclick = () => {
     setGsiMode(gsiMode === "map" ? null : "map");
     toast(gsiMode
       ? "地図モード：国土地理院の地図を地形に重ねて表示しています（日本国内のみ）。真上近くから見下ろすと文字が読みやすくなります。"
-      : "Google の3D地図に戻しました。", 3500);
+      : "Google の3D地図に戻しました。", gsiMode ? 2000 : 1500);
   };
 
   // ---- 機体の真下の住所（国土地理院の逆ジオコーダ。町丁目まで）。ボタンを押したときに1回だけ調べ、動き出したら消す ----
